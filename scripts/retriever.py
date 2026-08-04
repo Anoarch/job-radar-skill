@@ -60,7 +60,7 @@ class Config:
     EXTRACT_TOP_N = 5            # 每次最多抓前 N 条原文（读全文，补薪资/学历/截止日）
     READ_TOKEN_BUDGET = 2000     # 读全文时单次截断上限（降耗关键）
     SEARCH_MAX_CHARS = 6000
-    STALE_DAYS = 45                 # 搜索结果页面发布日距今超过此天数 → 视为已截止归档，搜索层直接丢弃
+    STALE_DAYS = int(os.getenv("MAX_AGE_DAYS", "15"))  # 搜索结果页面发布日距今超过此天数 → 视为过期归档，搜索层直接丢弃；环境变量 MAX_AGE_DAYS 可调（默认15天：只收近15天发布，用户要求）
     BUDGET_CNY_PER_DAY = BUDGET_CNY_PER_DAY   # 来自 config：全站每日检索预算上限
     TIMEOUT = 30
     WEIGHTS = {"专业": 0.40, "经验": 0.25, "学历": 0.15, "城市": 0.10, "薪资": 0.10}
@@ -214,6 +214,22 @@ def _parse_jina_date(s):
     return None
 
 
+def _parse_pub_date(s):
+    """解析 Tavily published_date（'2025-06-01' / '2025-06-01T10:00:00Z' / 'Jun 1, 2025'）→ date。"""
+    if not s:
+        return None
+    s = str(s).strip()
+    m = re.match(r"^(\d{4}-\d{2}-\d{2})", s)   # 去掉可能的 'T10:00:00Z' 时间后缀
+    if m:
+        s = m.group(1)
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d", "%Y年%m月%d日", "%b %d, %Y"):
+        try:
+            return _dt.datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def filter_expired(data, today=None):
     """新鲜度闸门：过期岗直接丢弃；未注明保留但提示核实；小结追加提示。
     返回 (data, stats)。必须在 attach_total_scores / rezone 之前调用。"""
@@ -318,7 +334,7 @@ class TavilyClient:
             "query": query,
             "max_results": 8,
             "search_depth": "advanced",  # 深度召回,提升招聘公告命中率
-            "days": 60,                 # 时间窗:只收近 60 天发布
+            "days": Config.STALE_DAYS,    # 时间窗:只收近 STALE_DAYS 天发布（与搜索层硬过滤对齐）
             "include_answer": False,
             "include_raw_content": False,  # 全文改用 extract 单独抓 Top5，避免每次拉全量
         }).encode("utf-8")
@@ -333,11 +349,18 @@ class TavilyClient:
         with _urlopen(req, timeout=Config.TIMEOUT) as r:
             obj = json.loads(r.read().decode("utf-8"))
         items = obj.get("results") or []
-        lines, urls, dropped = [], [], 0
+        lines, urls, dropped, stale_dropped = [], [], 0, 0
+        cutoff = _dt.date.today() - _dt.timedelta(days=Config.STALE_DAYS)
         for it in items:
             url = it.get("url", "")
             if is_blocked(url):
                 dropped += 1
+                continue
+            # 搜索层硬闸：发布日距今超 STALE_DAYS 的旧归档页直接丢
+            # （修复 Tavily days 软约束可能漏掉的过期结果，避免报告出现 2025 年等离谱旧岗）
+            pub_date = _parse_pub_date(it.get("published_date"))
+            if pub_date is not None and pub_date < cutoff:
+                stale_dropped += 1
                 continue
             urls.append(url)
             title = it.get("title", "")
@@ -356,8 +379,13 @@ class TavilyClient:
         if not lines:
             return "(Tavily 未返回有效结果)", []
         blob = "\n---\n".join(lines)
-        if dropped:
-            blob = "[搜索层已过滤 {} 条商业平台链接]\n".format(dropped) + blob
+        if dropped or stale_dropped:
+            notes = []
+            if dropped:
+                notes.append("{} 条商业平台链接".format(dropped))
+            if stale_dropped:
+                notes.append("{} 条超 {} 天的旧页面".format(stale_dropped, Config.STALE_DAYS))
+            blob = "[搜索层已过滤：{}]\n".format("；".join(notes)) + blob
         return blob, urls
 
     def search(self, query):
