@@ -55,8 +55,10 @@ class Config:
     JINA_READER_URL = "https://r.jina.ai/"
     TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
     TAVILY_SEARCH_URL = "https://api.tavily.com/search"
+    TAVILY_EXTRACT_URL = "https://api.tavily.com/extract"
     SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "auto")  # auto / tavily / jina
-    READ_TOKEN_BUDGET = 2000     # jina 读全文时单次截断上限（降耗关键）
+    EXTRACT_TOP_N = 5            # 每次最多抓前 N 条原文（读全文，补薪资/学历/截止日）
+    READ_TOKEN_BUDGET = 2000     # 读全文时单次截断上限（降耗关键）
     SEARCH_MAX_CHARS = 6000
     STALE_DAYS = 45                 # 搜索结果页面发布日距今超过此天数 → 视为已截止归档，搜索层直接丢弃
     BUDGET_CNY_PER_DAY = BUDGET_CNY_PER_DAY   # 来自 config：全站每日检索预算上限
@@ -80,6 +82,16 @@ def _urlopen(req, timeout=30):
     if _OPENER:
         return _OPENER.open(req, timeout=timeout)
     return urllib.request.urlopen(req, timeout=timeout)
+
+
+def _dedup(urls):
+    """保序去重，供读全文挑选 TopN 原文链接。"""
+    seen, out = set(), []
+    for u in urls:
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -300,14 +312,15 @@ class TavilyClient:
     支持 keyless（默认,零注册）与 Bearer key 两种模式。免费档 1000 credits/月。
     content 摘要已足够 LLM 打分，因此搜索层不再把整篇公告全文拉回 → token 消耗降 ~95%。"""
 
-    def _search(self, query):
+    def _search_full(self, query):
+        """返回 (blob, urls)。blob 为 LLM 友好文本；urls 为本批命中的合规链接（供读全文用）。"""
         payload = json.dumps({
             "query": query,
             "max_results": 8,
             "search_depth": "advanced",  # 深度召回,提升招聘公告命中率
             "days": 60,                 # 时间窗:只收近 60 天发布
             "include_answer": False,
-            "include_raw_content": False,
+            "include_raw_content": False,  # 全文改用 extract 单独抓 Top5，避免每次拉全量
         }).encode("utf-8")
         headers = {"Content-Type": "application/json"}
         if Config.TAVILY_API_KEY:
@@ -320,12 +333,13 @@ class TavilyClient:
         with _urlopen(req, timeout=Config.TIMEOUT) as r:
             obj = json.loads(r.read().decode("utf-8"))
         items = obj.get("results") or []
-        lines, dropped = [], 0
+        lines, urls, dropped = [], [], 0
         for it in items:
             url = it.get("url", "")
             if is_blocked(url):
                 dropped += 1
                 continue
+            urls.append(url)
             title = it.get("title", "")
             content = (it.get("content") or "").strip()
             # 编码兜底：个别 GBK 站点 content 可能乱码，尝试修复
@@ -340,19 +354,63 @@ class TavilyClient:
             lines.append("【标题】{}\n【链接】{}\n【发布】{}\n【摘要】{}".format(
                 title, url, pub, content[:800]))
         if not lines:
-            return "(Tavily 未返回有效结果)"
+            return "(Tavily 未返回有效结果)", []
         blob = "\n---\n".join(lines)
         if dropped:
             blob = "[搜索层已过滤 {} 条商业平台链接]\n".format(dropped) + blob
-        return blob
+        return blob, urls
 
     def search(self, query):
         try:
-            return self._search(query)
+            blob, _ = self._search_full(query)
+            return blob
         except urllib.error.HTTPError as e:
             return "搜索失败: Tavily HTTP {}".format(e.code)
         except Exception as e:
             return "搜索失败: {}（若持续,请检查网络或代理设置）".format(e)
+
+    def search_with_urls(self, query):
+        """返回 (blob, urls)，供 SearchAgent 收集链接后再抓全文。"""
+        try:
+            return self._search_full(query)
+        except Exception:
+            return "(搜索失败)", []
+
+    def extract(self, urls):
+        """读全文（A 步骤）：Tavily Extract API 抓 TopN 原文纯净文本，供 LLM 补 薪资/学历/截止日。
+        keyless 模式无 extract 权限 → 直接返回空（主流程降级为仅摘要）。"""
+        if not urls:
+            return ""
+        if not Config.TAVILY_API_KEY:
+            return ""
+        payload = json.dumps({
+            "urls": urls[:Config.EXTRACT_TOP_N],
+            "include_images": False,
+            "format": "markdown",
+            "extract_depth": "advanced",  # 政府/医院官网多 JS 渲染，advanced 成功率更高
+            # 带 query 让 Tavily 只回与招聘相关的 Top chunks，体积小且命中薪资/截止日
+            "query": "招聘岗位 薪资 学历要求 报名截止日期 投递方式 专业要求",
+            "chunks_per_source": 4,
+        }).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + Config.TAVILY_API_KEY,
+        }
+        req = urllib.request.Request(
+            Config.TAVILY_EXTRACT_URL, data=payload, headers=headers, method="POST")
+        try:
+            with _urlopen(req, timeout=Config.TIMEOUT) as r:
+                obj = json.loads(r.read().decode("utf-8"))
+        except Exception:
+            return ""  # 读全文失败不影响主流程
+        chunks = []
+        for it in obj.get("results") or []:
+            u = it.get("url", "")
+            # Tavily extract 返回 raw_content（markdown 正文）或 content
+            txt = (it.get("raw_content") or it.get("content") or "").strip()
+            if txt:
+                chunks.append("【原文链接】{}\n{}".format(u, txt[:Config.READ_TOKEN_BUDGET]))
+        return "\n---\n".join(chunks) if chunks else ""
 
 
 class _JinaSearchClient:
@@ -416,6 +474,28 @@ class _JinaSearchClient:
         except Exception as e:
             return "搜索失败: {}（若持续，请检查网络或代理设置）".format(e)
 
+    def read_full(self, urls):
+        """读全文兜底（jina reader r.jina.ai）。jina 冻结时返回空，主流程不受影响。"""
+        if not urls or not Config.JINA_API_KEY:
+            return ""
+        chunks = []
+        for u in urls[:Config.EXTRACT_TOP_N]:
+            try:
+                req = urllib.request.Request(
+                    Config.JINA_READER_URL + urllib.parse.quote(u, safe=""),
+                    headers={
+                        "Authorization": "Bearer " + Config.JINA_API_KEY,
+                        "X-Timeout": "15",
+                        "X-Token-Budget": str(Config.READ_TOKEN_BUDGET),
+                    },
+                )
+                with _urlopen(req, timeout=Config.TIMEOUT) as r:
+                    txt = r.read().decode("utf-8", "ignore")
+                chunks.append("【原文链接】{}\n{}".format(u, txt[:Config.READ_TOKEN_BUDGET]))
+            except Exception:
+                continue
+        return "\n---\n".join(chunks)
+
 
 class WebSearchClient:
     """搜索层编排：Tavily 优先（免费 keyless / 自带 key），jina 搜索兜底。
@@ -439,6 +519,29 @@ class WebSearchClient:
         if provider in ("auto", "tavily"):
             return "(搜索层暂不可用;请配置 TAVILY_API_KEY 提升额度,或设 SEARCH_PROVIDER=jina 并配置 JINA_API_KEY)"
         return "(搜索层暂不可用;请配置 JINA_API_KEY)"
+
+    def search_with_urls(self, query):
+        """返回 (blob, urls)。Tavily 优先返回链接；jina 兜底无链接；都不行返回空。"""
+        provider = Config.SEARCH_PROVIDER
+        if provider in ("auto", "tavily"):
+            blob, urls = self.tavily.search_with_urls(query)
+            if blob and not blob.startswith("搜索失败") and "未返回有效结果" not in blob:
+                return blob, urls
+        if provider in ("auto", "jina") and Config.JINA_API_KEY:
+            return self._jina.search(query), []
+        if provider in ("auto", "tavily"):
+            return "(搜索层暂不可用;请配置 TAVILY_API_KEY 或用 jina)", []
+        return "(搜索层暂不可用;请配置 JINA_API_KEY)", []
+
+    def read_full(self, urls):
+        """读全文（A 步骤）：优先 Tavily extract，其次 jina reader；都无 key 则返回空。"""
+        if Config.TAVILY_API_KEY:
+            txt = self.tavily.extract(urls)
+            if txt:
+                return txt
+        if Config.JINA_API_KEY:
+            return self._jina.read_full(urls)
+        return ""
 
 
 class LLMClient:
@@ -484,44 +587,47 @@ class SearchAgent:
         edu = p.get("学历", "")
         queries = []
         # ------------------------------------------------------------------
-        # 专业 → 领域通道词映射（解决医学/法律/教育等专业被通用模板带偏）
-        # 每个类目：(专业关键词列表, [领域通道词])
-        # 匹配策略：专业字段含任一关键词即追加对应通道词；多个类目叠加去重。
-        # 无匹配时走通用兜底（事业/国企），保证任何专业都不会零 query。
+        # 全面「专业 → 领域通道词」映射（覆盖主要学科门类，不只医学）。
+        # 每类：(专业关键词, [体制内/社招通道词])。匹配任一关键词即叠加对应通道。
+        # 无匹配 → 通用事业/国企兜底，保证任何专业都非零 query。
+        # 合规：仅瞄公开招录（医院/卫健委/中小学/研究所/国企/博物馆…），不碰商业招聘平台。
         # ------------------------------------------------------------------
         DOMAIN_CHANNELS = [
-            # 医学/卫生/药学/护理
-            (["医学", "药学", "护理", "临床", "中医", "中药", "口腔", "公共卫生",
-              "医学影像", "医学检验", "康复", "麻醉", "助产", "营养"],
-             ["医院", "卫健委", "公立医院", "附属医院"]),
-            # 法律/司法/公安
-            (["法律", "法学", "司法", "检察", "公安", "警察", "监狱", "律师", "公证"],
-             ["司法所", "法院", "检察院", "公安局"]),
-            # 教育/师范/教师
-            (["教育", "师范", "教师", "学前", "学科教学", "汉语国际", "对外汉语"],
-             ["中小学", "教育局", "高校 辅导员", "党校"]),
-            # 工科/计算机/电子
-            (["计算机", "软件", "电子", "通信", "电气", "机械", "土木", "建筑", "化工",
-              "材料", "人工智能", "AI", "数据", "网络", "自动化", "光电", "航空航天",
-              "船舶", "汽车", "能源", "动力"],
-             ["研究所", "国企", "央企"]),
-            # 理科
-            (["数学", "物理", "化学", "生物", "统计", "地理", "地质", "天文", "生态", "环境"],
-             ["研究所", "实验室", "高校 科研"]),
-            # 文科/文史哲/外语
-            (["中文", "历史", "哲学", "新闻", "传播", "外语", "英语", "日语", "俄语",
-              "韩语", "翻译", "政治", "马克思", "社会学", "心理", "图书", "档案", "文物"],
-             ["博物馆", "图书馆", "高校 行政", "党校"]),
-            # 经济/管理/财会
+            (["医学", "药学", "护理", "临床", "中医", "中药", "口腔", "公共卫生", "预防医学",
+               "医学影像", "医学检验", "康复", "麻醉", "助产", "营养", "兽医", "卫生检验"],
+             ["医院 招聘", "卫健委 事业单位", "公立医院 编制", "疾控中心"]),
+            (["法律", "法学", "司法", "检察", "公安", "警察", "监狱", "律师", "公证", "法务"],
+             ["法院 招聘", "检察院 招聘", "司法局 事业单位", "公安局 文职"]),
+            (["教育", "师范", "教师", "学前", "学科教学", "汉语国际", "对外汉语", "特教"],
+             ["中小学 教师招聘", "教育局 事业单位", "高校 辅导员", "党校"]),
+            (["计算机", "软件", "电子", "通信", "电气", "机械", "土木", "建筑", "化工", "材料",
+               "人工智能", "AI", "数据", "网络", "自动化", "光电", "航空航天", "船舶", "汽车",
+               "能源", "动力", "测控"],
+             ["研究所 招聘", "国企 央企 校招", "科技公司 社招"]),
+            (["数学", "物理", "化学", "生物", "统计", "地理", "地质", "天文", "生态", "环境",
+               "大气", "海洋"],
+             ["研究所 科研助理", "高校 实验室", "气象/环保 事业单位"]),
+            (["中文", "历史", "哲学", "新闻", "传播", "外语", "英语", "日语", "俄语", "翻译",
+               "政治", "马克思", "社会学", "心理", "图书", "档案", "文物", "考古"],
+             ["博物馆 招聘", "图书馆 事业单位", "高校 行政", "党校 招聘"]),
             (["会计", "金融", "经济", "管理", "工商", "公共管理", "税务", "财政", "审计",
-              "市场营销", "人力资源", "MBA"],
-             ["银行", "财政局", "审计局"]),
+               "市场营销", "人力资源", "国贸", "保险", "财务"],
+             ["银行 招聘", "财政局 事业单位", "审计局 招聘", "国企 财务"]),
+            (["艺术", "设计", "美术", "音乐", "舞蹈", "传媒", "编导", "表演", "摄影", "动画"],
+             ["文化馆 招聘", "美术馆 事业单位", "高校 艺术教师", "融媒体 招聘"]),
+            (["体育", "运动", "武术", "健身"],
+             ["体育局 事业单位", "学校 体育教师", "运动队 招聘"]),
+            (["农学", "林学", "园艺", "植物", "动物科学", "水产", "畜牧", "农业"],
+             ["农业农村局 事业单位", "农科院 招聘", "林场 畜牧站"]),
+            (["军事", "国防", "武器", "弹药", "装甲"],
+             ["军队文职 招聘", "军工 央企", "军校 招聘"]),
+            (["食品", "安全", "质量", "标准", "计量", "检验"],
+             ["市场监管局 事业单位", "检测院 招聘", "食药检 事业单位"]),
         ]
         channels = []
         for keys, chs in DOMAIN_CHANNELS:
             if any(k in major for k in keys):
                 channels.extend(chs)
-        # 去重保序
         seen, channels_uniq = set(), []
         for ch in channels:
             if ch not in seen:
@@ -529,21 +635,24 @@ class SearchAgent:
                 channels_uniq.append(ch)
         # 通用兜底：未匹配任何专业类目 → 给事业/国企通道
         if not channels_uniq:
-            channels_uniq = ["事业单位", "国企"]
-        # 每个城市生成：通用 query + 领域专属 query（最多前 2 个城市，避免 token 浪费）
+            channels_uniq = ["事业单位 招聘", "国企 央企 招聘"]
+
+        # 每个城市：体制内通用 + 领域社招/专业岗 + 泛职能岗（覆盖非技术岗求职者）
         for c in cities[:2]:
             queries.append("{} {} 事业单位 公开招聘 2026 报名".format(c, major))
-            for ch in channels_uniq[:3]:  # 每个城市最多追加 3 条领域通道
-                queries.append("{} {} {} 招聘 2026 报名".format(c, major, ch))
+            for ch in channels_uniq[:3]:
+                queries.append("{} {} {} 2026 报名 招聘".format(c, major, ch))
+            queries.append("{} {} 行政 项目 人力 招聘 本科 2026".format(c, major))
+        # 应届生补充校招
         if status == "应届生":
-            queries.append("{} {} 校园招聘 2026 应届 事业单位".format(cities[0], major))
-        # 全局去重 + 截断到 6 条
-        seen, uniq = set(), []
+            queries.append("{} {} 校园招聘 2026 应届 事业单位 国企".format(cities[0], major))
+        # 全局去重 + 截断到 7 条（平衡召回与成本）
+        seen2, uniq = set(), []
         for q in queries:
-            if q not in seen:
-                seen.add(q)
+            if q not in seen2:
+                seen2.add(q)
                 uniq.append(q)
-        return uniq[:6]
+        return uniq[:7]
 
     def _user_prompt(self, search_blob):
         p = self.profile
@@ -564,7 +673,7 @@ class SearchAgent:
         )
 
     def run(self):
-        """搜索 + LLM 解析，返回中文-key 报告 JSON；无 Key 返回 None。"""
+        """搜索 + 读全文(TopN) + LLM 解析，返回中文-key 报告 JSON；无 Key 返回 None。"""
         if not Config.DEEPSEEK_API_KEY:
             return None
         if is_over_budget():
@@ -573,9 +682,18 @@ class SearchAgent:
                 "已生成的报告仍可正常查看。".format(BUDGET_CNY_PER_DAY))
         queries = self._build_queries()
         snippets = []
+        all_urls = []
         for q in queries:
-            snippets.append("### 搜索词: {}\n{}".format(q, self.search_client.search(q)))
+            blob, urls = self.search_client.search_with_urls(q)
+            snippets.append("### 搜索词: {}\n{}".format(q, blob))
+            all_urls.extend(urls)
         search_blob = "\n\n".join(snippets)
+        # A. 读全文：抓 TopN 原文补全 薪资/学历/截止日期（需 Tavily key 或 jina key；否则跳过）
+        full = self.search_client.read_full(_dedup(all_urls))
+        if full:
+            search_blob += (
+                "\n\n### 重点岗位原文（已抓全文，优先据此抽取薪资/学历要求/报名截止日期）\n"
+                + full)
         system = SYSTEM_PROMPT.replace("<<TODAY>>", _dt.date.today().isoformat())
         return self.llm.complete_json(system, self._user_prompt(search_blob))
 
