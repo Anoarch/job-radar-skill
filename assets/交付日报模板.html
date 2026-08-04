@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{TITLE}}</title>
+<meta name="description" content="岗位雷达 · 专属岗位日报">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#e9ebee;
+    --card:#ffffff;
+    --line:#dfe2e6;
+    --txt:#1f2329;
+    --txt-2:#5b616b;
+    --txt-dim:#8a9099;
+    --brand:#ff7a45;
+    --brand-soft:#fff3ec;
+    --ok:#2c9c6a;
+    --warn:#d9480f;
+    --radius:14px;
+  }
+  body{
+    background:var(--bg);
+    color:var(--txt);
+    font:15px/1.75 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:0 0 48px;
+  }
+  .wrap{max-width:720px;margin:0 auto;padding:0 16px}
+
+  /* 顶部 */
+  .top{padding:30px 0 20px;text-align:center;position:relative}
+  .top::before{
+    content:"";position:absolute;top:-40px;left:50%;transform:translateX(-50%);
+    width:340px;height:180px;border-radius:50%;
+    background:radial-gradient(circle,rgba(255,122,69,.13),transparent 68%);
+    pointer-events:none;
+  }
+  .logo{display:inline-flex;align-items:center;gap:8px;font-weight:700;font-size:15px;position:relative}
+  .logo svg{display:block}
+  h1{font-size:23px;letter-spacing:-.4px;margin:14px 0 6px;position:relative}
+  .date{font-size:13px;color:var(--txt-dim);position:relative}
+
+  /* 画像条 */
+  .profile{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px 18px;margin:20px 0 8px;box-shadow:0 1px 2px rgba(31,35,41,.04);
+  }
+  .profile .t{font-size:12px;color:var(--txt-dim);margin-bottom:9px;letter-spacing:.5px}
+  .chips{display:flex;flex-wrap:wrap;gap:7px}
+  .chip{
+    font-size:13px;padding:4px 11px;border-radius:100px;
+    background:#f4f5f7;color:var(--txt-2);border:1px solid var(--line);
+  }
+  .chip.hl{background:var(--brand-soft);color:var(--warn);border-color:#ffd9c7}
+
+  .summary{
+    font-size:14px;color:var(--txt-2);line-height:1.85;
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px 18px;margin:12px 0 6px;box-shadow:0 1px 2px rgba(31,35,41,.04);
+  }
+  .summary b{color:var(--txt)}
+
+  /* 分区标题 */
+  h2{
+    font-size:16px;margin:30px 0 14px;display:flex;align-items:center;gap:9px;
+  }
+  h2::before{content:"";width:3px;height:15px;background:var(--brand);border-radius:2px}
+  h2 .n{font-size:12px;color:var(--txt-dim);font-weight:400}
+
+  /* 卡片 */
+  .card{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:17px 18px;margin-bottom:12px;box-shadow:0 1px 2px rgba(31,35,41,.04);
+  }
+  .card.dim{opacity:.78}
+  .r1{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .role{font-size:16px;font-weight:600;line-height:1.45}
+  .role a{color:var(--txt);text-decoration:none;border-bottom:1px solid transparent}
+  .role a:hover{border-bottom-color:var(--brand)}
+  .score{
+    flex:none;font-size:12px;font-weight:700;padding:3px 9px;border-radius:100px;
+    background:#f4f5f7;color:var(--txt-2);border:1px solid var(--line);white-space:nowrap;
+  }
+  .score.hi{background:var(--brand-soft);color:var(--warn);border-color:#ffd9c7}
+  .meta{font-size:13px;color:var(--txt-2);margin-top:7px}
+  .meta b{color:var(--txt);font-weight:600}
+  .tags{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .tag{font-size:12px;padding:2px 9px;border-radius:6px;background:#f4f5f7;color:var(--txt-dim);border:1px solid var(--line)}
+  .tag.ok{background:#eaf7f1;color:var(--ok);border-color:#cceadd}
+  .tag.warn{background:var(--brand-soft);color:var(--warn);border-color:#ffd9c7}
+  .why{
+    font-size:13.5px;color:var(--txt-2);line-height:1.8;margin-top:11px;
+    padding:11px 13px;background:#fafbfc;border-radius:9px;border-left:2px solid var(--brand);
+  }
+  .why b{color:var(--txt)}
+  .note{font-size:12.5px;color:var(--warn);margin-top:9px}
+  .apply{margin-top:13px;padding-top:12px;border-top:1px solid #f0f1f3;font-size:13px}
+  .apply a{
+    display:inline-block;color:#fff;background:var(--brand);text-decoration:none;
+    padding:7px 16px;border-radius:8px;font-weight:600;font-size:13px;
+  }
+  .apply a:hover{background:#f2662b}
+  .apply .way{color:var(--txt-dim);font-size:12.5px;margin-top:8px;display:block;line-height:1.7}
+
+  /* 底部 */
+  .foot{
+    background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:22px 18px;margin-top:32px;text-align:center;box-shadow:0 1px 2px rgba(31,35,41,.04);
+  }
+  .foot h3{font-size:15px;margin-bottom:8px}
+  .foot p{font-size:13px;color:var(--txt-2);line-height:1.85}
+  .qr{width:124px;height:124px;margin:14px auto 8px;border-radius:12px;border:1px solid var(--line);overflow:hidden;background:#fafbfc}
+  .qr img{width:100%;height:100%;object-fit:contain;display:block}
+  .discl{font-size:12px;color:var(--txt-dim);line-height:1.8;margin-top:22px;text-align:center;padding:0 6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="top">
+    <div class="logo">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="#ff7a45" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="9.5" opacity=".35"/><circle cx="12" cy="12" r="5.5" opacity=".6"/>
+        <circle cx="12" cy="12" r="1.6" fill="#ff7a45" stroke="none"/><path d="M12 12L19 6"/>
+      </svg>
+      岗位雷达
+    </div>
+    <h1>{{HEAD}}</h1>
+    <div class="date">{{DATE}} 生成 ｜ 手残巧匠人工触发</div>
+  </div>
+
+  <div class="profile">
+    <div class="t">你提交的求职画像</div>
+    <div class="chips">{{CHIPS}}</div>
+  </div>
+
+  <div class="summary">{{SUMMARY}}</div>
+
+  {{CITYFILTER}}
+
+  {{SECTIONS}}
+
+  <div class="foot">
+    <h3>这份日报还合用吗？</h3>
+    <p>直接回复这封邮件告诉我哪里不准，我下一版就改。<br>比如：想看更多国企 / 薪资门槛提到 1.2w / 加上福州。</p>
+    <div class="qr"><img src="douyin-qr.png" alt="抖音二维码" onerror="this.parentNode.style.display='none'"></div>
+    <p><b>抖音 @手残巧匠</b><br>一个普通人用 AI 手搓小玩意儿，岗位雷达就是第一个。</p>
+  </div>
+
+  <div class="discl">
+    岗位雷达仅汇总<b>公开发布</b>的公职 / 事业单位 / 国企 / 高校 / 医院招聘公告，<b>不含商业招聘平台</b>（BOSS / 智联 / 猎聘 / 51job 等）。<br>
+    岗位信息由公开渠道检索整理，投递前请以招聘方原文截止日期为准。<br>
+    本服务免费，不收费、不卖课、不倒卖你的信息。
+  </div>
+
+</div>
+</body>
+</html>

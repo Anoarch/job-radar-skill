@@ -1,0 +1,8 @@
+# 密钥（绝不提交）
+.env
+
+# 运行产物
+report/
+deliveries/
+__pycache__/
+*.pyc
