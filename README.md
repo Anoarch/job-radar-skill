@@ -101,3 +101,29 @@ job-radar-skill/
 - **DeepSeek**：约 ¥0.03 / 份报告，极便宜。
 
 单份报告消耗已从 ~150k token 降到 ~13k（仅 DeepSeek 输入），因为 Tavily 返回的摘要已足够 AI 打分，不再拉取整篇公告全文。
+
+---
+
+## 八、自定义（改成你自己的情况）
+
+装好之后，所有文件都在你本地 WorkBuddy 的 skills 目录里（`~/.workbuddy/skills/job-radar/` 或项目级 `.workbuddy/skills/job-radar/`），是**明文 Python/HTML**，随便改。作者不介入、也收不到你的数据或反馈——改完重跑就生效。
+
+**1. 改求职画像（必做）**
+复制 `profile.example.json` 为 `profile.json`，填自己的专业/城市/学历/状态/经验/邮箱。
+
+**2. 改时间窗（只收最近 N 天）**
+默认只收**近 15 天**发布的岗位。想放宽，跑之前设环境变量：
+```bash
+MAX_AGE_DAYS=30 python scripts/run_report.py --profile profile.json --out report
+```
+
+**3. 加自己的行业检索词**
+打开 `scripts/retriever.py`，找到 `_build_queries()` 函数，在对应学科里加你的细分词。比如你是临床医学、想额外搜「规培」「专硕」，加一行即可。
+
+**4. 改预算 / 每份额度**
+`scripts/config.py` 里 `BUDGET_CNY_PER_DAY`（全站日预算，默认 ¥10≈200 份）、`FREE_QUOTA_PER_EMAIL_PER_DAY`（每邮箱每日份数，默认 3）——直接改这两个常量。
+
+**5. 改报告样式**
+`assets/交付日报模板.html` 是纯静态模板，改 CSS 就能换皮肤；`scripts/build_delivery.py` 里的 `CARD_TPL` 控制每张岗位卡片长啥样。
+
+> 除了 SKILL.md 的触发词，改其他文件都不用重启 WorkBuddy，重跑 `run_report.py` 即生效。

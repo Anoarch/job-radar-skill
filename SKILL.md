@@ -33,6 +33,20 @@ description: 根据个人求职画像（专业/城市/学历/经验）自动检�
 ## 每日自动推送（可选）
 用户可在 WorkBuddy 里建一个每日自动化（如每天 9:30），prompt 写「运行岗位雷达 skill，用我的 profile.json 生成今日岗位日报」，即可每天自动收到报告。
 
+## 自定义（改成你自己的情况）
+
+本 skill 的所有文件都是你本地的**明文 Python/HTML**，装到 WorkBuddy 后就在 `~/.workbuddy/skills/job-radar/`（或项目级 `.workbuddy/skills/job-radar/`）。作者完全不介入、也收不到你的任何数据或反馈——你改完重跑即可。
+
+| 想改什么 | 改哪里 | 怎么改 |
+|---|---|---|
+| 求职画像（必改） | `profile.json` | 复制 `profile.example.json` 改成自己的专业/城市/学历/经验/邮箱 |
+| 只收最近 N 天的岗位 | 环境变量 `MAX_AGE_DAYS` | 默认 15；想放宽到 30 天，跑前设 `MAX_AGE_DAYS=30`，如 `MAX_AGE_DAYS=30 python scripts/run_report.py --profile profile.json --out report` |
+| 加自己的细分行业词 | `scripts/retriever.py` 的 `_build_queries()` | 在对应学科里加一行检索词，如临床医学想额外搜「规培」「专硕」 |
+| 每日预算 / 每邮箱份数 | `scripts/config.py` 的 `BUDGET_CNY_PER_DAY` / `FREE_QUOTA_PER_EMAIL_PER_DAY` | 直接改这两个常量（skill 副本里是硬编码，改文件即可） |
+| 报告长什么样 | `assets/交付日报模板.html`（纯静态）+ `scripts/build_delivery.py` 的 `CARD_TPL` | 改 CSS 换皮肤，改 `CARD_TPL` 调每张卡片字段 |
+
+> 改完任何文件，重跑 `run_report.py` 即生效；只有改了本 SKILL.md 的触发词才需重启 WorkBuddy。
+
 ## 抖音引流（作者署名，不硬广）
 - 生成的 HTML 报告页脚自带「抖音 @手残巧匠」文字 + 二维码（引导用户关注作者）。
 - 作者抖音号：**@手残巧匠** —— 一个普通人用 AI 手搓小玩意儿，岗位雷达就是第一个。
