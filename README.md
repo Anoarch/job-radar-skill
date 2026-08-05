@@ -2,6 +2,8 @@
 
 一个 **WorkBuddy skill**：填好你的求职画像（专业 / 城市 / 学历），它自动检索**公开发布类**招聘公告（政府 / 事业单位 / 国企 / 高校 / 医院 / 公务员），经 AI 匹配打分后生成一份中文岗位日报 HTML。
 
+**🎯 零 API key（默认）**：直接用 WorkBuddy 自带的联网搜索（WebSearch）+ 宿主模型打分，装完即用地，**不用申请任何第三方 key、不产生任何费用**。
+
 **合规底线**：只做公开招录类，商业招聘平台（BOSS / 智联 / 猎聘 / 51job 等）一律不碰。
 
 **作者抖音**：[@手残巧匠](https://www.douyin.com) —— 一个普通人用 AI 手搓小玩意儿。报告页脚已内置二维码，欢迎关注。
@@ -10,32 +12,36 @@
 
 ## 一、安装到 WorkBuddy
 
-1. 克隆本仓库：
+1. 下载本仓库（GitHub 页面绿色 **Code → Download ZIP**，或用 git）：
    ```bash
    git clone https://github.com/Anoarch/job-radar-skill.git
    ```
-2. 把 `job-radar-skill/` 整个文件夹复制到 WorkBuddy 的 skills 目录（二选一）：
-   - **用户级（所有项目可用）**：`~/.workbuddy/skills/job-radar/`
+2. 把文件夹**重命名为 `job-radar`**，复制到 WorkBuddy 的 skills 目录（二选一）：
+   - **用户级（所有项目可用）**：`C:\Users\你的用户名\.workbuddy\skills\job-radar\`（Windows）或 `~/.workbuddy/skills/job-radar/`（macOS / Linux）
    - **项目级（仅当前项目）**：`<你的工作区>/.workbuddy/skills/job-radar/`
-3. 重启 WorkBuddy 客户端，skill 即生效。对话里说「跑岗位雷达」即可触发。
+3. 重启 WorkBuddy 客户端，skill 即生效。
 
 ---
 
-## 二、配置 API Key（环境变量）
+## 二、配置（零 key，默认不用配）
+
+**默认路径（推荐，零 key）**：什么都不用配。装完重启后，对话里说「跑岗位雷达」即可——skill 会用 WorkBuddy 自带的 WebSearch 联网搜岗、用宿主模型打分，不产生任何第三方费用。
+
+**可选高级模式（自接 key，命令行批量跑）**：若你想脱离对话、纯命令行跑，或用自己的 key 控制成本，才需要配置：
 
 | 变量 | 必需 | 说明 |
 |---|---|---|
-| `DEEPSEEK_API_KEY` | **是** | [DeepSeek 官网](https://platform.deepseek.com) 免费申请，用于 AI 匹配打分 |
-| `TAVILY_API_KEY` | 否 | [Tavily](https://app.tavily.com) 注册。**不填也能跑**——自动用 keyless 零注册免费模式（rate-limited，适合轻量/试用） |
-| `JINA_API_KEY` | 否 | Jina 搜索，仅作 Tavily 不可用时的兜底 |
+| `DEEPSEEK_API_KEY` | 仅高级模式需 | [DeepSeek 官网](https://platform.deepseek.com) 免费申请，用于脚本模式打分 |
+| `TAVILY_API_KEY` | 否 | [Tavily](https://app.tavily.com) 注册，脚本模式搜岗；不填自动 keyless 免费 |
+| `JINA_API_KEY` | 否 | 仅 Tavily 兜底 |
 
-WorkBuddy 里配置环境变量：设置 → 环境变量，或在该工作区的 `.env` 文件里填。
+> 普通用户走默认零 key 路径，**这一节可以直接跳过**。
 
 ---
 
 ## 三、填写你的画像
 
-复制 `profile.example.json` 为 `profile.json`，改成你自己的：
+复制 `profile.example.json` 为 `profile.json`，改成你自己的（专业 / 城市 / 学历 / 状态 / 经验 / 邮箱）。也可以不填，直接在对话里口述画像。
 
 ```json
 {
@@ -53,10 +59,10 @@ WorkBuddy 里配置环境变量：设置 → 环境变量，或在该工作区�
 
 ## 四、运行
 
-对话里直接说：
+**对话触发（默认，零 key）**：
 > 跑岗位雷达，用我的 profile.json 生成今日岗位日报
 
-或命令行：
+**命令行（可选高级模式，需自接 key）**：
 ```bash
 python scripts/run_report.py --profile profile.json --out report
 # 生成的报告在 report/index.html
@@ -67,9 +73,9 @@ python scripts/run_report.py --profile profile.json --out report
 ## 五、每天自动推送（可选）
 
 在 WorkBuddy 建一个每日自动化（如每天 9:30），prompt 写：
-> 运行岗位雷达 skill，用我的 profile.json 生成今日岗位日报，若已连接邮箱则发到我邮箱。
+> 运行岗位雷达 skill，用我的 profile.json 生成今日岗位日报
 
-即可每天自动收到报告。
+即可每天自动收到报告（同样零 key）。
 
 ---
 
@@ -77,53 +83,36 @@ python scripts/run_report.py --profile profile.json --out report
 
 ```
 job-radar-skill/
-  SKILL.md              # skill 入口（触发词 + 指令）
+  SKILL.md              # skill 入口（触发词 + 零 key 对话工作流指令）
   README.md             # 本文件
   profile.example.json  # 画像模板
-  scripts/
-    run_report.py       # CLI 入口（检索 + 渲染）
-    retriever.py        # 检索 + 打分核心（Tavily 优先 + jina 兜底，两层解耦）
-    config.py           # 合规黑名单/白名单 + 配额
-    usage_store.py      # 每日预算熔断
-    build_delivery.py   # HTML 渲染（纯静态零 JS）
-    sample_jobs.py      # 样例回退（默认不启用）
+  scripts/              # 可选高级模式：自接 key 的命令行批量生成
+    run_report.py       # CLI 入口
+    retriever.py        # 检索 + 打分核心（与对话路径规则完全一致）
+    config.py / usage_store.py / build_delivery.py / sample_jobs.py
   assets/
-    交付日报模板.html    # 报告模板
+    交付日报模板.html    # 报告模板（对话模式也复用它）
     douyin-qr.png       # 抖音二维码（引流）
 ```
 
 ---
 
-## 七、免费额度说明
+## 七、自定义（改成你自己的情况）
 
-- **Tavily keyless**（默认，零注册）：适合轻量试用，有速率限制。
-- **Tavily 免费 key**：注册后 1000 credits/月，无信用卡。
-- **DeepSeek**：约 ¥0.03 / 份报告，极便宜。
+所有文件都在你本地 WorkBuddy 的 skills 目录里，是**明文 Python/HTML**，随便改。作者不介入、也收不到你的数据或反馈——改完重跑就生效。
 
-单份报告消耗已从 ~150k token 降到 ~13k（仅 DeepSeek 输入），因为 Tavily 返回的摘要已足够 AI 打分，不再拉取整篇公告全文。
+| 想改什么 | 改哪里 |
+|---|---|
+| 求职画像（必改） | `profile.json`（复制 `profile.example.json`） |
+| 只收最近 N 天 | 对话里说「放宽到 30 天」；或脚本模式设 `MAX_AGE_DAYS=30` |
+| 加细分行业词 | 对话里补充，或脚本模式改 `scripts/retriever.py` 的 `_build_queries()` |
+| 报告样式 | `assets/交付日报模板.html` + 对话要求调整 |
 
 ---
 
-## 八、自定义（改成你自己的情况）
+## 八、合规与原理
 
-装好之后，所有文件都在你本地 WorkBuddy 的 skills 目录里（`~/.workbuddy/skills/job-radar/` 或项目级 `.workbuddy/skills/job-radar/`），是**明文 Python/HTML**，随便改。作者不介入、也收不到你的数据或反馈——改完重跑就生效。
-
-**1. 改求职画像（必做）**
-复制 `profile.example.json` 为 `profile.json`，填自己的专业/城市/学历/状态/经验/邮箱。
-
-**2. 改时间窗（只收最近 N 天）**
-默认只收**近 15 天**发布的岗位。想放宽，跑之前设环境变量：
-```bash
-MAX_AGE_DAYS=30 python scripts/run_report.py --profile profile.json --out report
-```
-
-**3. 加自己的行业检索词**
-打开 `scripts/retriever.py`，找到 `_build_queries()` 函数，在对应学科里加你的细分词。比如你是临床医学、想额外搜「规培」「专硕」，加一行即可。
-
-**4. 改预算 / 每份额度**
-`scripts/config.py` 里 `BUDGET_CNY_PER_DAY`（全站日预算，默认 ¥10≈200 份）、`FREE_QUOTA_PER_EMAIL_PER_DAY`（每邮箱每日份数，默认 3）——直接改这两个常量。
-
-**5. 改报告样式**
-`assets/交付日报模板.html` 是纯静态模板，改 CSS 就能换皮肤；`scripts/build_delivery.py` 里的 `CARD_TPL` 控制每张岗位卡片长啥样。
-
-> 除了 SKILL.md 的触发词，改其他文件都不用重启 WorkBuddy，重跑 `run_report.py` 即生效。
+- **只检索公开招录**（政府 / 事业单位 / 国企 / 高校 / 医院 / 公务员公开发布），商业平台一律不碰。
+- **默认零 key**：搜岗用 WorkBuddy WebSearch，打分用宿主模型推理，无任何第三方费用。
+- **15 天新鲜度硬闸 + 商业平台黑名单**，从源头避免"旧岗混入"和合规风险。
+- 想脱离对话批量跑？`scripts/` 里保留了与你本地对话**完全一致规则**的命令行版本，自接 key 即可用。
